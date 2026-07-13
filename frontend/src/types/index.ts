@@ -39,6 +39,12 @@ export interface Product {
   ingredientsMarathi?: string
   benefits?: string
   benefitsMarathi?: string
+
+  // SEO fields (used by admin products UI)
+  metaTitle?: string
+  metaDescription?: string
+  metaKeywords?: string
+
   isFeatured: boolean
   isActive: boolean
   category: Category
@@ -46,6 +52,7 @@ export interface Product {
   images: ProductImage[]
   createdAt: string
 }
+
 
 export interface Address {
   id: string
