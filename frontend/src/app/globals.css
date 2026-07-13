@@ -1,0 +1,90 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;900&family=Inter:wght@300;400;500;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --navy: #1a3a5c;
+  --navy-deep: #0f2237;
+  --navy-mid: #254d73;
+  --cream: #f5f0e8;
+  --cream-dark: #ede6d6;
+  --gold: #c9a84c;
+  --gold-light: #e2c97e;
+  --gold-pale: #f7eed6;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--cream);
+  color: #1a1a1a;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5 {
+  font-family: 'Playfair Display', serif;
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-gradient-to-r from-gold to-gold-light text-navy-deep font-bold px-8 py-3 rounded
+           text-sm tracking-widest uppercase transition-all hover:-translate-y-0.5
+           hover:shadow-lg hover:shadow-gold/30 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply border border-navy/30 text-navy px-8 py-3 rounded text-sm tracking-widest
+           uppercase transition-all hover:border-gold hover:text-gold font-medium;
+  }
+
+  .btn-ghost {
+    @apply text-gold font-semibold text-sm tracking-wide border-b border-gold/40
+           hover:border-gold transition-all pb-0.5;
+  }
+
+  .card {
+    @apply bg-white rounded-xl border border-navy/[0.07] overflow-hidden
+           transition-all hover:-translate-y-1 hover:shadow-xl hover:shadow-navy/10;
+  }
+
+  .input-field {
+    @apply w-full border border-navy/20 rounded-lg px-4 py-3 text-sm text-navy
+           focus:outline-none focus:ring-2 focus:ring-gold/30 focus:border-gold
+           bg-white placeholder:text-gray-400 transition-all;
+  }
+
+  .section-label {
+    @apply text-xs font-semibold tracking-[0.18em] uppercase text-gold mb-3;
+  }
+
+  .section-title {
+    @apply font-serif text-3xl md:text-4xl lg:text-5xl font-bold text-navy leading-tight;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--cream-dark); }
+::-webkit-scrollbar-thumb { background: var(--gold); border-radius: 3px; }
+
+/* WhatsApp float */
+.whatsapp-float {
+  @apply fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-[#25D366]
+         flex items-center justify-center shadow-xl shadow-[#25D366]/40
+         hover:scale-110 transition-transform cursor-pointer;
+}
+
+/* Smooth transition duration */
+.duration-400 {
+  transition-duration: 400ms;
+}
+
