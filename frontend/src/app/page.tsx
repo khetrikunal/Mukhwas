@@ -23,9 +23,18 @@ const TESTIMONIALS = [
 ]
 
 async function getFeaturedProducts() {
+  // Home page is static-generated during `next build`.
+  // Ensure backend slowness/unavailability never blocks the build.
+  const timeoutMs = 5000
   try {
-    const res = await productApi.getFeatured()
-    return res.data.data || []
+    const res = (await Promise.race([
+      productApi.getFeatured(),
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(() => reject(new Error('Featured fetch timed out')), timeoutMs)
+      ),
+    ])) as any
+
+    return res.data?.data || []
   } catch {
     return []
   }

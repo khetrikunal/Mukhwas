@@ -4,6 +4,8 @@ import { API_URL } from './config'
 const api = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
+  // Prevent Next.js static generation/build from hanging forever if backend is sleeping/unreachable.
+  timeout: 8000,
 })
 
 // Attach JWT token to every request

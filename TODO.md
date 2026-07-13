@@ -1,7 +1,6 @@
-# TODO
+- [x] Update axios client to include a request timeout so build never hangs
+- [x] Guard home page featured-products fetch with an upper bound timeout (return [] on failure)
+- [x] Run `npm run build` in `frontend/` until it succeeds
+- [ ] Report exact cause of timeout + list modified files
 
-- [ ] Verify hero video background implementation in `frontend/src/app/page.tsx`.
-- [ ] If video path is incorrect for Next.js, move MP4 from `frontend/src/assets/` to `frontend/public/` and update the `source` URL.
-- [ ] Add/confirm desired settings: autoplay, muted, loop, and increased opacity.
-- [ ] Run frontend dev/build to confirm video loads.
 
