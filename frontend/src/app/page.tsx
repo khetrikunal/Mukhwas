@@ -1,11 +1,14 @@
 import Link from 'next/link'
 import Image from 'next/image'
+import CloudinarySampleImage from '@/components/CloudinarySampleImage'
 import { Crown, Truck, Leaf, Tag, Lock, ArrowRight } from 'lucide-react'
+
 import ProductCard from '@/components/product/ProductCard'
 import { productApi } from '@/lib/api'
 import { DUMMY_PRODUCTS } from '@/lib/dummyData'
 import CompanyName1824 from '@/components/common/CompanyName1824'
 import { WHATSAPP_LINK } from '@/lib/branding'
+
 
 const CATEGORIES = [
   { name: 'Paan', slug: 'paan', emoji: '🍃', count: 2 },
@@ -47,6 +50,7 @@ export default async function HomePage() {
     <>
       {/* ── HERO ────────────────────────────────────────────────── */}
       <section className="relative min-h-screen bg-gradient-royal flex items-center pt-[70px] overflow-hidden">
+        <CloudinarySampleImage />
         {/* Background video (muted, autoplay, loop) */}
         <div className="absolute inset-0 w-full h-full">
           <video
