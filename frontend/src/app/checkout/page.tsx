@@ -13,7 +13,7 @@ declare global {
 }
 
 export default function CheckoutPage() {
-  const { items, subtotal, discount, couponCode, total, clearCart } = useCartStore()
+  const { items, subtotal, discount, couponCode, total, clearCart, shipping: storeShipping } = useCartStore()
   const { user, isAuthenticated } = useAuthStore()
   const router = useRouter()
 
