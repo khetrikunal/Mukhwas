@@ -1,6 +1,6 @@
-- [x] Update axios client to include a request timeout so build never hangs
-- [x] Guard home page featured-products fetch with an upper bound timeout (return [] on failure)
-- [x] Run `npm run build` in `frontend/` until it succeeds
-- [ ] Report exact cause of timeout + list modified files
+# TODO (CORS Render/Vercel fix)
 
+- [ ] Update backend CORS allowed origins defaults to include Vercel frontend origin
+- [ ] Redeploy backend (if needed)
+- [ ] Test OPTIONS + POST to `/api/auth/register` with Origin header and verify `Access-Control-Allow-Origin`
 
