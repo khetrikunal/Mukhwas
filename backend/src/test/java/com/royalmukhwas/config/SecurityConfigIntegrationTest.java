@@ -23,7 +23,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
-import com.royalmukhwas.config.SecurityConfig; // ensure main config is compiled for tests
+// import com.royalmukhwas.config.SecurityConfig; // avoid import resolution issues; use FQCN below
 
 import java.io.IOException;
 import java.util.Collections;
@@ -49,7 +49,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebMvcTest(controllers = { }) // no production controllers — only our stubs
 @AutoConfigureMockMvc
 @Import({
-        SecurityConfig.class,
+        com.royalmukhwas.config.SecurityConfig.class,
         SecurityConfigIntegrationTest.TestSecurityBeans.class,
         SecurityConfigIntegrationTest.TestRoutes.class
 })
