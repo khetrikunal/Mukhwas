@@ -1,5 +1,6 @@
 package com.royalmukhwas.config;
 
+
 import com.royalmukhwas.security.JwtFilter;
 import com.royalmukhwas.security.JwtUtil;
 import com.royalmukhwas.security.UserDetailsServiceImpl;
@@ -46,10 +47,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * gate. Intentionally avoids {@code @MockBean} — its package location varies
  * across Spring Boot versions (and was removed in 4.x).
  */
-@WebMvcTest(controllers = { }) // no production controllers — only our stubs
+@WebMvcTest(controllers = {}) // no production controllers — only our stubs
 @AutoConfigureMockMvc
 @Import({
-        com.royalmukhwas.config.SecurityConfig.class,
         SecurityConfigIntegrationTest.TestSecurityBeans.class,
         SecurityConfigIntegrationTest.TestRoutes.class
 })
