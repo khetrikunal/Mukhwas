@@ -23,7 +23,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
-import com.royalmukhwas.config.SecurityConfig;
+import com.royalmukhwas.config.SecurityConfig; // ensure main config is compiled for tests
 
 import java.io.IOException;
 import java.util.Collections;
