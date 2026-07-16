@@ -13,8 +13,18 @@ declare global {
 }
 
 export default function CheckoutPage() {
-  const { items, subtotal, discount, couponCode, total, clearCart, shipping: storeShipping } = useCartStore()
+  const { items, discount, couponCode, clearCart } = useCartStore()
+
+  const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0)
+  const shipping = subtotal >= 499 ? 0 : 50
+  const total = subtotal + shipping - discount
+
+
   const { user, isAuthenticated } = useAuthStore()
+
+  // Checkout totals must never depend on a potentially stale store-derived subtotal.
+  // We recompute from cart items to avoid the observed "Subtotal = ₹0" bug.
+
   const router = useRouter()
 
   const [addresses, setAddresses] = useState<Address[]>([])
@@ -110,6 +120,10 @@ export default function CheckoutPage() {
 
       // Razorpay flow
       const rpRes = await paymentApi.createOrder(order.id)
+      // IMPORTANT: Razorpay amount is created server-side. The checkout UI above is now derived
+      // from cart items (subtotal) + computed shipping, so any mismatch should be due to
+      // backend order total calculation.
+      // If backend uses order totals computed from server cart, ensure it matches this UI.
       const razorpayOrder = JSON.parse(rpRes.data.data)
 
       const rzp = new window.Razorpay({

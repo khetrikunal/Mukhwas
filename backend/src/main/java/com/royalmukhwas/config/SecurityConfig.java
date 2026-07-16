@@ -1,4 +1,3 @@
-package com.royalmukhwas.config;
 
 import com.royalmukhwas.security.JwtFilter;
 import lombok.RequiredArgsConstructor;
@@ -77,10 +76,18 @@ public class SecurityConfig {
 
         config.setAllowedOrigins(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-        config.setAllowedHeaders(List.of("*"));
+
+        // Be explicit: some servlet containers/Spring versions are inconsistent with "*" for allowed headers.
+        // These cover typical browser preflight requirements for auth/register/login.
+        config.setAllowedHeaders(List.of(
+                "Authorization",
+                "Content-Type",
+                "Accept",
+                "Origin",
+                "X-Requested-With"
+        ));
 
         // For token-based auth (Authorization: Bearer), cookies are not required.
-        // Enabling credentials can break CORS with wildcard headers/origins.
         config.setAllowCredentials(false);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
