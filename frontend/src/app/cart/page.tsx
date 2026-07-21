@@ -7,13 +7,11 @@ import { useCartStore } from '@/store/cartStore'
 import toast from 'react-hot-toast'
 
 export default function CartPage() {
-  const { items, updateQuantity, removeItem, clearCart, subtotal, discount, couponCode,
+  const { items, updateQuantity, removeItem, clearCart, subtotal, shipping, discount,
+          couponCode, total, synced,
           applyCoupon, removeCoupon } = useCartStore()
   const [couponInput, setCouponInput] = useState('')
   const [couponLoading, setCouponLoading] = useState(false)
-
-  const shipping = subtotal >= 499 ? 0 : 50
-  const total = subtotal + shipping - discount
 
   const handleApplyCoupon = async () => {
     if (!couponInput.trim()) return

@@ -109,6 +109,8 @@ export const useCartStore = create<CartState>()(
             get().resetFromServer(res.data.data)
             return
           } catch {
+            // API failed - revert to local mode to prevent perpetual desync
+            set({ synced: false })
             /* fall through to local */
           }
         }
@@ -128,18 +130,21 @@ export const useCartStore = create<CartState>()(
       },
 
       updateQuantity: async (variantId, quantity) => {
+        // If quantity drops to zero or below, remove the item instead of updating
+        if (quantity <= 0) {
+          await get().removeItem(variantId)
+          return
+        }
         if (get().synced) {
           try {
             const res = await cartApi.update({ variantId, quantity })
             get().resetFromServer(res.data.data)
             return
           } catch {
+            // API failed - revert to local mode to prevent perpetual desync
+            set({ synced: false })
             /* fall through to local */
           }
-        }
-        if (quantity <= 0) {
-          await get().removeItem(variantId)
-          return
         }
         set((state) => ({
           items: state.items.map((i) =>
@@ -155,6 +160,8 @@ export const useCartStore = create<CartState>()(
             get().resetFromServer(res.data.data)
             return
           } catch {
+            // API failed - revert to local mode to prevent perpetual desync
+            set({ synced: false })
             /* fall through to local */
           }
         }
@@ -168,6 +175,8 @@ export const useCartStore = create<CartState>()(
             get().resetFromServer(res.data.data)
             return
           } catch {
+            // API failed - revert to local mode to prevent perpetual desync
+            set({ synced: false })
             /* fall through to local */
           }
         }

@@ -26,11 +26,9 @@ export const useAuthStore = create<AuthState>()(
         localStorage.setItem('rm_token', token)
         if (refreshToken) localStorage.setItem('rm_refresh_token', refreshToken)
         set({ user, token, isAuthenticated: true })
-        // Hydrate the server-side cart for this user (lazy import avoids a circular dep
-        // at module-load time, since cartStore imports nothing from authStore).
-        import('./cartStore').then(({ useCartStore }) => {
-          useCartStore.getState().hydrate()
-        })
+        // CartHydrator component in the layout will call hydrate() automatically
+        // when it detects isAuthenticated=true && synced=false.
+        // This avoids duplicate hydration calls that can race each other.
       },
       logout: () => {
         localStorage.removeItem('rm_token')
