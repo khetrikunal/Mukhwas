@@ -4,8 +4,11 @@ import { API_URL } from './config'
 const api = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
-  // Prevent Next.js static generation/build from hanging forever if backend is sleeping/unreachable.
-  timeout: 8000,
+  // Render's free tier spins down after ~15 min of inactivity; the first request
+  // after a cold start can take 30-60 seconds. A short timeout (e.g. 8 s) would
+  // abort the request before the backend has a chance to respond, showing the
+  // user a "Request Canceled" in the browser's Network tab.
+  timeout: 35000,
 })
 
 // Attach JWT token to every request
@@ -85,6 +88,8 @@ export const authApi = {
   registerWholesale: (data: any) => api.post('/api/auth/register/wholesale', data),
   login: (data: any) => api.post('/api/auth/login', data),
   adminLogin: (data: any) => api.post('/api/auth/admin/login', data),
+  forgotPassword: (data: { email: string }) => api.post('/api/auth/forgot-password', data),
+  resetPassword: (data: { token: string; newPassword: string }) => api.post('/api/auth/reset-password', data),
 }
 
 // ── Products ──────────────────────────────────────────────────────────────────

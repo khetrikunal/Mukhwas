@@ -64,10 +64,10 @@ public class GlobalExceptionHandler {
                         .success(false).message("Validation failed").data(errors).build());
     }
 
-    @ExceptionHandler(Exception.class)
+@ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGeneral(Exception ex) {
-        log.error("Unhandled exception caught by GlobalExceptionHandler", ex);
+        log.error("Unhandled exception caught by GlobalExceptionHandler: {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.error("An unexpected error occurred"));
+                .body(ApiResponse.error("An unexpected error occurred: " + ex.getMessage()));
     }
 }

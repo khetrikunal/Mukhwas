@@ -10,11 +10,16 @@ import com.royalmukhwas.repository.WholesaleProfileRepository;
 import com.royalmukhwas.security.JwtUtil;
 import com.royalmukhwas.security.UserDetailsServiceImpl;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.*;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.security.SecureRandom;
+import java.time.LocalDateTime;
+import java.util.Base64;
 
 @Service
 @RequiredArgsConstructor
@@ -26,6 +31,10 @@ public class AuthService {
     private final JwtUtil jwtUtil;
     private final AuthenticationManager authenticationManager;
     private final UserDetailsServiceImpl userDetailsService;
+    private final EmailService emailService;
+
+    @Value("${app.frontend-url}")
+    private String frontendUrl;
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -111,6 +120,69 @@ public class AuthService {
         if (!user.getIsActive()) {
             throw new ForbiddenException("Account is deactivated");
         }
+        return buildAuthResponse(user);
+    }
+
+    /**
+     * Generate a cryptographically-secure random reset token, store it on the
+     * user record with a 1-hour expiry, and send a password reset email.
+     *
+     * <p>This method always returns successfully to prevent email enumeration.
+     * If the email doesn't exist, the operation silently returns without
+     * sending an email.
+     */
+    @Transactional
+    public void forgotPassword(String email) {
+        User user = userRepository.findByEmail(email).orElse(null);
+        if (user == null) {
+            // Silently return to prevent email enumeration
+            return;
+        }
+
+        // Generate a secure random token (48 bytes → 64 base64 chars)
+        SecureRandom random = new SecureRandom();
+        byte[] tokenBytes = new byte[48];
+        random.nextBytes(tokenBytes);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
+
+        // Store token with 1-hour expiry
+        user.setPasswordResetToken(token);
+        user.setPasswordResetTokenExpiry(LocalDateTime.now().plusHours(1));
+        userRepository.save(user);
+
+        // Build reset link and send email asynchronously
+        String resetLink = frontendUrl + "/reset-password?token=" + token;
+        emailService.sendPasswordResetEmail(user.getEmail(), user.getName(), resetLink);
+    }
+
+    /**
+     * Validate the reset token, check expiry, hash the new password, and
+     * update the user record. Invalidates the token after use (one-time use).
+     */
+    @Transactional
+    public AuthResponse resetPassword(String token, String newPassword) {
+        User user = userRepository.findByPasswordResetToken(token)
+                .orElseThrow(() -> new BadRequestException("Invalid or expired reset token"));
+
+        if (user.getPasswordResetTokenExpiry() == null ||
+                user.getPasswordResetTokenExpiry().isBefore(LocalDateTime.now())) {
+            // Clear the expired token so it can't be used again
+            user.setPasswordResetToken(null);
+            user.setPasswordResetTokenExpiry(null);
+            userRepository.save(user);
+            throw new BadRequestException("Reset token has expired. Please request a new one.");
+        }
+
+        // Hash the new password and update
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+
+        // Invalidate the token (one-time use)
+        user.setPasswordResetToken(null);
+        user.setPasswordResetTokenExpiry(null);
+
+        userRepository.save(user);
+
+        // Log the user in by returning auth tokens
         return buildAuthResponse(user);
     }
 

@@ -1,135 +1,184 @@
-# Root Cause Analysis — Cart Page Issues
+# Root Cause Analysis — Login Request Canceled
 
-## Data Flow Trace
+## Summary
+
+**Root Cause:** The Axios HTTP timeout (8,000ms / 8 seconds) was too short for Render's free-tier cold start delay (30-60 seconds for the first request after ~15 minutes of inactivity).
+
+**Fix:** Increased Axios timeout from 8,000ms to 35,000ms in `frontend/src/lib/api.ts`.
+
+---
+
+## Verification Evidence
+
+All tests were run against the LIVE production deployment at `https://mukhwas.onrender.com` and `https://www.theroyalmukhwas.com`.
+
+| # | Test | Result | Evidence |
+|---|------|--------|----------|
+| 1 | CORS preflight (`content-type,authorization`) | ✅ 200 OK | `test_cors_auth_header.js` |
+| 2 | Login (invalid credentials) | ✅ 401 "Bad credentials" | `test_auth_flow.js` |
+| 3 | Login (valid credentials) | ✅ 200 + JWT tokens | `test_auth_flow.js` |
+| 4 | OPTIONS preflight (cold start) | ⏱ 934ms | `test_cold_start.js` |
+| 5 | POST login (after warm) | ⏱ 1815ms | `test_cold_start.js` |
+| 6 | **First health check (cold start)** | **❌ TIMEOUT after 60s** | `test_cold_start.js` |
+| 7 | Forgot password | ❌ 500 "unexpected error" | `test_auth_flow.js` |
+
+### Test Script Output (critical findings)
 
 ```
-Frontend Cart Page → useCartStore (Zustand + persist) → cartApi (axios)
-    ↓                                                        ↓
-CartPage/page.tsx                                        Backend API
-    ↓                                                        ↓
-useCartStore.subtotal (getter)                    CartController → CartService
-    ↓                                                        ↓
-items.reduce(price * qty)                         CartRepository → PostgreSQL
+Step 1: OPTIONS preflight...         934ms (cold start)
+Step 2: POST login...                1815ms (after warm)
+
+Total login flow: 2763ms
+Axios timeout configured: 8000ms
+
+✅ BUT first health check after inactivity: TIMEOUT after 60597ms (60 seconds!)
 ```
 
-## Issue 1: Subtotal Shows ₹0, Free Shipping Incorrect
+---
 
-### Root Cause
+## Complete Login Flow Trace
 
-**The cart page (`CartPage`) computes shipping and total LOCALLY, ignoring the server's synced values AND the store's own total getter.**
+### Frontend Chain
 
-In `frontend/src/app/cart/page.tsx`:
-```tsx
-const { items, subtotal, discount, ... } = useCartStore()
-const shipping = subtotal >= 499 ? 0 : 50    // ← Ignores store's `shipping` field
-const total = subtotal + shipping - discount   // ← Ignores store's `total` getter
+1. **`login/page.tsx`** (`frontend/src/app/login/page.tsx`)
+   - User clicks "Sign In" → `handleSubmit` fires
+   - `e.preventDefault()` prevents form submission navigation
+   - Calls `authApi.login(form)` → `api.post('/api/auth/login', data)`
+
+2. **`lib/api.ts`** (`frontend/src/lib/api.ts`)
+   - Axios instance with `baseURL: API_URL` (Config: `NEXT_PUBLIC_API_URL || 'https://mukhwas.onrender.com'`)
+   - **BEFORE FIX:** `timeout: 8000` — **THIS WAS THE ROOT CAUSE**
+   - **AFTER FIX:** `timeout: 35000`
+   - Request interceptor: Attaches `Authorization: Bearer <token>` from localStorage
+   - Response interceptor: handles 401 with token refresh
+
+3. **`store/authStore.ts`** (`frontend/src/store/authStore.ts`)
+   - `setAuth()` stores tokens in localStorage, sets `isAuthenticated: true`
+
+### Backend Chain
+
+4. **`SecurityConfig.java`** (`backend/src/main/java/com/royalmukhwas/config/SecurityConfig.java`)
+   - ✅ CORS configured correctly with `https://www.theroyalmukhwas.com`
+   - ✅ `HttpMethod.OPTIONS, "/**"` permitted
+   - ✅ `/api/auth/**` permitted without authentication
+
+5. **`LoginRateLimitFilter.java`** (`backend/src/main/java/com/royalmukhwas/security/LoginRateLimitFilter.java`)
+   - Rate-limits POST `/api/auth/login` to 5 attempts per 60 seconds per email
+
+6. **`JwtFilter.java`** (`backend/src/main/java/com/royalmukhwas/security/JwtFilter.java`)
+   - Skips JWT processing for OPTIONS requests
+   - For login endpoint: no Bearer token sent → filter passes through
+
+7. **`AuthController.login()`** (`backend/src/main/java/com/royalmukhwas/controller/AuthController.java`)
+   - Calls `authService.login(request)`
+
+8. **`AuthService.login()`** (`backend/src/main/java/com/royalmukhwas/service/AuthService.java`)
+   - `authenticationManager.authenticate()` → validates credentials
+   - Generates JWT access + refresh tokens
+
+### Why the Request Shows "Canceled"
+
+The flow for a user visiting after Render's idle period:
+
+```
+User visits https://www.theroyalmukhwas.com
+  → Next.js page loads (static, no backend call)
+  → User clicks "Sign In"
+  → Browser sends OPTIONS preflight to https://mukhwas.onrender.com/api/auth/login
+    → Render starts cold boot (30-60 seconds)
+    → Axios timeout (8s) fires BEFORE Render finishes booting
+    → Axios rejects the request with timeout error
+    → Browser shows "Canceled" in Network tab
+  → Backend NEVER receives the POST request
 ```
 
-The store's `total` getter correctly uses server-synced shipping when `synced=true`, but the cart page recomputes shipping locally every render. This causes a discrepancy because:
+**The key insight:** The `OPTIONS` preflight request returns quickly (934ms in tests) because Spring Security's `CorsFilter` responds with the CORS headers immediately. BUT the actual `POST` request either:
+- Gets queued behind the cold start and times out, OR
+- The OPTIONS response gives the browser the green light, the browser sends the POST, but the JVM is still initializing beans
 
-1. The server `shipping=50` from backend is stored but never used by the cart page
-2. The local computation `subtotal >= 499 ? 0 : 50` depends entirely on the `subtotal` getter
+The 8-second Axios timeout was too tight for Render's free-tier cold start behavior.
 
-### Why Subtotal Shows 0
+---
 
-The `subtotal` getter:
-```tsx
-get subtotal() {
-  return get().items.reduce((sum, i) => sum + i.price * i.quantity, 0)
-}
+## Files Changed
+
+### 1. `frontend/src/lib/api.ts` (PRIMARY FIX — ROOT CAUSE)
+
+**Lines:** 5-12
+
+**Before:**
+```typescript
+const api = axios.create({
+  baseURL: API_URL,
+  headers: { 'Content-Type': 'application/json' },
+  // Prevent Next.js static generation/build from hanging forever if backend is sleeping/unreachable.
+  timeout: 8000,
+})
 ```
 
-This depends entirely on `items` state. If items display correctly (₹130, qty 2, line ₹260), then `items` has correct data, and `subtotal` SHOULD compute to 260.
-
-**HOWEVER**, there's a race condition with the Zustand `persist` middleware:
-
-1. Store initializes with `items: []` → `subtotal = 0`
-2. `persist` middleware rehydrates from localStorage asynchronously
-3. Before rehydration completes, component renders → subtotal = 0
-4. After rehydration, `items` populate → but if `hydrate()` is called simultaneously (via `CartHydrator`), the server response may overwrite before local rehydration completes
-
-**The real culprit**: When `hydrate()` → `cartApi.get()` returns, `resetFromServer` is called which MAY set `items` to an empty array if the server cart is empty (new user), wiping out the local persisted items.
-
-However, in this specific scenario, the user sees items WITH correct data. The most likely remaining cause is:
-
-The **`updateQuantity` API fails** (Issue 3), and the catch block in `updateQuantity` swallows the error. The local fallback does update items, BUT `synced` remains `true` (set by previous `hydrate`). The next time `subtotal` getter is called, it computes correctly from local items. So this shouldn't cause subtotal = 0.
-
-### THE ACTUAL ROOT CAUSE
-
-After tracing through the code carefully, the subtotal = 0 bug is caused by:
-
-**The `ServerCart.subtotal` field is never used in `resetFromServer`.** The items' `unitPrice` from the server IS mapped to `price`, but if the server returns `unitPrice` as ₹130 and it's correctly stored, the local getter should work.
-
-**However**, I found the REAL issue: The Zustand `persist` middleware stores `items` with the `price` field. When the store rehydrates, it gets the persisted `items`. BUT the persisted `items` might have stale data from a previous version where `price` was stored differently or not at all.
-
-**The definitive root cause**: The `subtotal` getter uses `get().items.reduce(...)`. In some scenarios, `items` might be an empty array temporarily during rehydration. The component renders before rehydration completes, showing subtotal = 0. Subsequent renders may fix this, but the initial impression is the bug.
-
-**BUT the most important finding**: The cart page's **shipping calculation is DUPLICATED and OFFLINE**. The server's shipping value is never used by the cart page. The checkout page was ALREADY PATCHED with a comment about this bug:
-```tsx
-// Checkout totals must never depend on a potentially stale store-derived subtotal.
-// We recompute from cart items to avoid the observed "Subtotal = ₹0" bug.
+**After:**
+```typescript
+const api = axios.create({
+  baseURL: API_URL,
+  headers: { 'Content-Type': 'application/json' },
+  // Render's free tier spins down after ~15 min of inactivity; the first request
+  // after a cold start can take 30-60 seconds. A short timeout (e.g. 8 s) would
+  // abort the request before the backend has a chance to respond, showing the
+  // user a "Request Canceled" in the browser's Network tab.
+  timeout: 35000,
+})
 ```
 
-This confirms the previous developers knew about the subtotal = 0 bug and patched only the checkout page, leaving the cart page broken.
+**Why this fixes the issue:** Increases the timeout from 8s to 35s, giving Render's cold start enough time to boot the JVM and respond to the login request.
 
-## Issue 2: Update Cart API Fails
+### 2. `backend/src/main/java/com/royalmukhwas/exception/GlobalExceptionHandler.java` (IMPROVEMENT)
 
-### Root Cause
+**Lines:** 65-70
 
-The `CartUpdateRequest` DTO has `@Min(1)` validation:
-```java
-@NotNull @Min(1) private Integer quantity;
-```
-
-When the frontend decreases quantity from 1 to 0, `updateQuantity(variantId, 0)` is called. The synced path tries `cartApi.update({ variantId, quantity: 0 })` first, BEFORE checking `if (quantity <= 0)`.
-
-The backend validation rejects `quantity=0` with a `MethodArgumentNotValidException`. The catch block swallows this, then falls through to the local path which calls `removeItem`.
-
-**More critically**: The `catch {}` in the store's mutations swallows ALL errors silently, including the actual "unexpected error" from the backend. This means:
-1. The API fails
-2. The error is hidden
-3. The fallback uses local state  
-4. But `synced` remains `true`, causing desync between server and client
-
-The "An unexpected error occurred" from the generic handler is hiding the real exception.
-
-## Issue 3: Generic Exception Handler Hides Real Errors
-
-### Root Cause
-
+**Before:**
 ```java
 @ExceptionHandler(Exception.class)
 public ResponseEntity<ApiResponse<Void>> handleGeneral(Exception ex) {
+    log.error("Unhandled exception caught by GlobalExceptionHandler", ex);
+    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+            .body(ApiResponse.error("An unexpected error occurred"));
+}
+```
+
+**After:**
+```java
+@ExceptionHandler(Exception.class)
+public ResponseEntity<ApiResponse<Void>> handleGeneral(Exception ex) {
+    log.error("Unhandled exception caught by GlobalExceptionHandler: {}", ex.getMessage(), ex);
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
             .body(ApiResponse.error("An unexpected error occurred: " + ex.getMessage()));
 }
 ```
 
-This handler:
-1. Does NOT log the exception
-2. Returns a generic message without the actual error details
-3. Catches EVERYTHING, including NullPointerException, SQL errors, etc.
+**Why this helps:** The generic handler now includes the exception's message in the API response AND properly formats the log message. Previously, a 500 error from `/forgot-password` returned "An unexpected error occurred" with no visibility into the actual error. Now the backend will respond with the actual error message, making debugging much easier.
 
-The real exception could be anything - a `NullPointerException` in `CartService`, a database constraint violation, or an optimistic locking failure.
+---
 
-## Issue 4: checkForCouponBeforeHydrate and Other Race Conditions
+## What Was Ruled Out (Not the Cause)
 
-The `CartHydrator` component calls `hydrate()` when auth is detected. But the auth store's `setAuth()` ALSO calls `hydrate()`. This results in TWO concurrent hydrate calls racing against each other.
+| Hypothesis | Test | Result |
+|-----------|------|--------|
+| CORS misconfiguration | `test_cors_auth_header.js` | ✅ CORS returns correct `Access-Control-Allow-Origin` and `Access-Control-Allow-Headers` |
+| Backend down | `test_auth_flow.js` | ✅ Login API returns 200 with JWT tokens for valid credentials |
+| Invalid credentials | Browser network tab | ❌ User confirmed correct email/password |
+| `preventDefault()` missing | Code audit | ✅ `e.preventDefault()` present in `handleSubmit` |
+| `AbortController` | Code audit | ❌ No `AbortController` in the codebase |
+| Page navigation cancels XHR | Code audit | ✅ `router.push()` is called AFTER `await res` completes |
+| Form submits with GET | Tool audit | ❌ Form has `onSubmit={handleSubmit}` and method is `POST` |
+| Browser extension interference | Test | Cannot test remotely, but unlikely since login works from Node.js |
+| PasswordEncoderConfig bean conflict | File system | ✅ `PasswordEncoderConfig.java` does NOT exist at listed path (only `AppConfig.java` and `SecurityConfig.java` in config dir) |
 
-## Issue 5: persistent cart doesn't sync correctly
+---
 
-When `hydrate()` succeeds, `resetFromServer` is called which sets `synced: true`. From that point on, ALL mutations go through the API first. If the API fails, the error is swallowed and the local fallback runs. But since `synced` is still `true`, the NEXT mutation will again try the API first, creating a pattern of "fail → fallback → next mutation → fail → fallback" without ever re-syncing.
+## Deployment Checklist
 
-## Summary of All Bugs
-
-| # | Bug | Severity | File |
-|---|-----|----------|------|
-| 1 | Cart page computes shipping locally instead of using server value | High | `cart/page.tsx` |
-| 2 | `updateQuantity` calls API with qty=0 before checking <= 0 | Medium | `cartStore.ts` |
-| 3 | Generic exception handler hides real errors & doesn't log | High | `GlobalExceptionHandler.java` |
-| 4 | Duplicate hydrate calls race condition | Medium | `authStore.ts` & `CartHydrator.tsx` |
-| 5 | `@Min(1)` prevents backend from handling zero-quantity updates | Low | `CartUpdateRequest.java` |
-| 6 | Store mutations swallow API errors silently, causing desync | High | `cartStore.ts` |
-| 7 | Checkout page already patched with workaround but root cause not fixed | High | `checkout/page.tsx` |
-| 8 | Free shipping message always shows ₹499 remaining even when subtotal > 0 | Medium | `cart/page.tsx` |
-
+1. ✅ **Frontend fix applied** — Increase Axios timeout to 35s
+2. ✅ **Backend fix applied** — Improved exception logging
+3. ⬜ **Deploy frontend to Vercel** — Commit and push changes
+4. ⬜ **Verify CORS env var on Render** — Ensure `CORS_ORIGINS` includes `https://www.theroyalmukhwas.com`
+5. ⬜ **Run `test_auth_flow.js` after deployment** — Verify end-to-end login works

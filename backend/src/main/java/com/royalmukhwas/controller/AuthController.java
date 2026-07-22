@@ -49,4 +49,26 @@ public class AuthController {
     public ResponseEntity<ApiResponse<AuthResponse>> refresh(@Valid @RequestBody RefreshTokenRequest request) {
         return ResponseEntity.ok(ApiResponse.success("Token refreshed", authService.refresh(request.getRefreshToken())));
     }
+
+    /**
+     * Send a password reset email with a time-limited token.
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<ApiResponse<Void>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        authService.forgotPassword(request.getEmail());
+        // Always return success to prevent email enumeration
+        return ResponseEntity.ok(ApiResponse.<Void>builder()
+                .success(true)
+                .message("If an account with that email exists, a password reset link has been sent.")
+                .build());
+    }
+
+    /**
+     * Reset the password using a valid reset token.
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<ApiResponse<AuthResponse>> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        AuthResponse response = authService.resetPassword(request.getToken(), request.getNewPassword());
+        return ResponseEntity.ok(ApiResponse.success("Password reset successful", response));
+    }
 }

@@ -48,6 +48,20 @@ public class EmailService {
                 "<p>You can now log in and access exclusive wholesale pricing.</p>");
     }
 
+    @Async
+    public void sendPasswordResetEmail(String to, String name, String resetLink) {
+        sendHtmlEmail(to, "Reset Your Password – The Royal Mukhwas",
+                "<h2>Password Reset Request</h2>" +
+                "<p>Hello " + name + ",</p>" +
+                "<p>We received a request to reset your password. Click the button below to set a new password.</p>" +
+                "<p style='text-align:center;margin:28px 0'>" +
+                "<a href='" + resetLink + "' style='display:inline-block;background:#c9a84c;color:#1a3a5c;padding:12px 32px;text-decoration:none;border-radius:6px;font-weight:bold;font-size:16px'>Reset Password</a>" +
+                "</p>" +
+                "<p>This link will expire in 1 hour.</p>" +
+                "<p>If you did not request a password reset, please ignore this email.</p>" +
+                "<p>Thank you,<br/><strong>The Royal Mukhwas Team</strong></p>");
+    }
+
     private void sendHtmlEmail(String to, String subject, String html) {
         try {
             MimeMessage message = mailSender.createMimeMessage();
