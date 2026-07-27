@@ -8,16 +8,14 @@ import com.royalmukhwas.security.AuthenticatedUserResolver;
 import com.royalmukhwas.service.CartService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 import java.util.UUID;
 
-/**
- * Server-side cart for authenticated users. Routes mirror the existing
- * {@code cartApi} contract in {@code frontend/src/lib/api.ts}.
- */
+@Slf4j
 @RestController
 @RequestMapping("/api/cart")
 @RequiredArgsConstructor
@@ -34,8 +32,19 @@ public class CartController {
     @PostMapping("/add")
     public ResponseEntity<ApiResponse<CartResponse>> add(@Valid @RequestBody CartItemRequest req,
                                                          Authentication auth) {
-        return ResponseEntity.ok(ApiResponse.success("Item added",
-                cartService.addItem(userResolver.getUserId(auth), req)));
+        UUID userId = userResolver.getUserId(auth);
+        log.debug("=== CartController.add() === userId={}, variantId={}, quantity={}",
+                userId, req.getVariantId(), req.getQuantity());
+        try {
+            CartResponse response = cartService.addItem(userId, req);
+            log.debug("=== CartController.add() SUCCESS === itemCount={}", response.getItemCount());
+            return ResponseEntity.ok(ApiResponse.success("Item added", response));
+        } catch (Exception e) {
+            log.error("=== CartController.add() FAILED === userId={}, variantId={}, quantity={}, exceptionType={}, message={}",
+                    userId, req.getVariantId(), req.getQuantity(),
+                    e.getClass().getName(), e.getMessage(), e);
+            throw e;
+        }
     }
 
     @PutMapping("/update")

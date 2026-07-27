@@ -9,6 +9,7 @@ import com.royalmukhwas.exception.CustomExceptions.BadRequestException;
 import com.royalmukhwas.exception.CustomExceptions.ResourceNotFoundException;
 import com.royalmukhwas.repository.*;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
+
+@Slf4j
 
 /**
  * Server-side shopping cart. One {@link Cart} per user, persisted across
@@ -42,14 +45,35 @@ public class CartService {
 
     @Transactional
     public CartResponse addItem(UUID userId, CartItemRequest req) {
+        log.debug("=== addItem START === userId={}, variantId={}, quantity={}",
+                userId, req.getVariantId(), req.getQuantity());
+
+        log.debug("Fetching or creating cart for userId={}", userId);
         Cart cart = getOrCreateCart(userId);
+        log.debug("Cart found/created: id={}, itemCount={}", cart.getId(), cart.getItems().size());
+
+        log.debug("Looking up variant by id={}", req.getVariantId());
         ProductVariant variant = variantRepository.findById(req.getVariantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Variant not found"));
+        log.debug("Variant found: id={}, productId={}, stockQuantity={}, isActive={}",
+                variant.getId(),
+                variant.getProduct() != null ? variant.getProduct().getId() : "NULL PRODUCT",
+                variant.getStockQuantity(),
+                variant.getIsActive());
+
         if (!Boolean.TRUE.equals(variant.getIsActive()))
             throw new BadRequestException("Variant is unavailable");
+        log.debug("Variant is active: OK");
+
+        log.debug("Checking stock: stockQuantity={} (class={}), req.getQuantity()={}",
+                variant.getStockQuantity(),
+                variant.getStockQuantity() != null ? variant.getStockQuantity().getClass().getName() : "NULL",
+                req.getQuantity());
         if (variant.getStockQuantity() < req.getQuantity())
             throw new BadRequestException("Insufficient stock (available: " + variant.getStockQuantity() + ")");
+        log.debug("Stock check passed");
 
+        log.debug("Checking for existing cart item with variantId={}", variant.getId());
         Optional<CartItem> existing = cart.getItems().stream()
                 .filter(i -> i.getVariant().getId().equals(variant.getId()))
                 .findFirst();
@@ -57,19 +81,29 @@ public class CartService {
         if (existing.isPresent()) {
             CartItem item = existing.get();
             int newQty = item.getQuantity() + req.getQuantity();
+            log.debug("Existing cart item found: currentQty={}, newQty={}", item.getQuantity(), newQty);
             if (newQty > variant.getStockQuantity())
                 throw new BadRequestException("Insufficient stock (available: " + variant.getStockQuantity() + ")");
             item.setQuantity(newQty);
+            log.debug("Updated existing item quantity to {}", newQty);
         } else {
+            log.debug("No existing cart item. Creating new CartItem for variantId={}, qty={}",
+                    variant.getId(), req.getQuantity());
             CartItem item = CartItem.builder()
                     .cart(cart)
                     .variant(variant)
                     .quantity(req.getQuantity())
                     .build();
             cart.getItems().add(item);
+            log.debug("New CartItem created");
         }
+
+        log.debug("Saving cart to database");
         cart = cartRepository.save(cart);
-        return toResponse(cart);
+        log.debug("Cart saved. Calling toResponse()");
+        CartResponse response = toResponse(cart);
+        log.debug("=== addItem END ===");
+        return response;
     }
 
     @Transactional

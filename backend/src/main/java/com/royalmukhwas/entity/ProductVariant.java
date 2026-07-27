@@ -1,5 +1,6 @@
 package com.royalmukhwas.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.GenericGenerator;
@@ -23,6 +24,7 @@ public class ProductVariant {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
+    @JsonIgnoreProperties({"variants", "images", "hibernateLazyInitializer", "handler"})
     private Product product;
 
     @Column(name = "weight_grams", nullable = false)
