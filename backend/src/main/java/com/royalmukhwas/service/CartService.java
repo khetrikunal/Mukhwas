@@ -175,9 +175,22 @@ public class CartService {
         });
     }
 
-    /** Build the response DTO with all totals computed server-side. */
+    /**
+     * Build the response DTO with all totals computed server-side.
+     *
+     * Calculation flow:
+     *   1. Subtotal  = Σ(unitPrice × quantity) for all items
+     *                  unitPrice = wholesalePrice if WHOLESALE user, else retailPrice
+     *   2. Discount  = coupon discount (if valid and applicable)
+     *   3. Shipping  = 0   if subtotal == 0 (empty cart) OR subtotal >= freeShippingThreshold (₹499)
+     *                  50  otherwise (flat rate)
+     *   4. Total     = max(0, subtotal + shipping - discount)
+     */
     private CartResponse toResponse(Cart cart) {
+        // Guard: role may be null on a freshly-created cart reference before DB reload.
+        // Default to CUSTOMER which uses retail pricing (safe, conservative fallback).
         User.Role role = cart.getUser().getRole();
+        if (role == null) role = User.Role.CUSTOMER;
         boolean isWholesale = role == User.Role.WHOLESALE;
 
         // Preload primary images for the products in this cart (avoids N+1 during item mapping).
@@ -219,7 +232,7 @@ public class CartService {
                     .build());
         }
 
-        // Discount
+        // Step 2: Discount — applied only if coupon is valid for this subtotal
         BigDecimal discount = BigDecimal.ZERO;
         boolean couponValid = false;
         if (cart.getCouponCode() != null) {
@@ -228,9 +241,13 @@ public class CartService {
             if (couponValid) discount = result.getDiscountAmount();
         }
 
+        // Step 3: Shipping = ₹50 flat, FREE if subtotal is 0 (empty) or ≥ freeShippingThreshold (₹499)
+        // Note: discount does NOT affect shipping (it's applied post-shipping to get total)
         BigDecimal shipping = subtotal.compareTo(BigDecimal.ZERO) > 0
                 && subtotal.compareTo(freeShippingThreshold) < 0
                 ? new BigDecimal("50") : BigDecimal.ZERO;
+
+        // Step 4: Total = Subtotal + Shipping − Discount (never negative)
         BigDecimal total = subtotal.add(shipping).subtract(discount).max(BigDecimal.ZERO);
 
         return CartResponse.builder()

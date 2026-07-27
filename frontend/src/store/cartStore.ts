@@ -16,7 +16,11 @@ interface CartState {
   items: CartItem[]
   couponCode: string | null
   discount: number
-  // Server-authoritative totals when authenticated; otherwise computed locally.
+  /**
+   * Server-authoritative shipping charge. Set by `resetFromServer()` after
+   * every API call. When `synced=false` (guest / pre-hydration), this stays
+   * at 0 — use `computedShipping` for display instead.
+   */
   shipping: number
   synced: boolean         // true once the cart has been hydrated from the server
   hydrating: boolean
@@ -28,7 +32,21 @@ interface CartState {
   removeCoupon: () => Promise<void>
   hydrate: () => Promise<void>
   resetFromServer: (data: ServerCart) => void
+  /**
+   * Always-correct subtotal: sum of (price × quantity) for all cart items.
+   * Computed on-the-fly — never hardcoded.
+   */
   get subtotal(): number
+  /**
+   * Always-correct shipping charge:
+   * - When synced (authenticated): uses server-returned `shipping` value.
+   * - When not synced (guest): computed locally — FREE if subtotal ≥ ₹499, else ₹50.
+   */
+  get computedShipping(): number
+  /**
+   * Always-correct order total: subtotal + computedShipping − discount.
+   * Never hardcoded.
+   */
   get total(): number
   get itemCount(): number
 }
@@ -203,23 +221,71 @@ export const useCartStore = create<CartState>()(
       },
 
       // ── Derived getters ─────────────────────────────────────────────────────
+
+      /**
+       * Subtotal = Σ(price × quantity) for all items.
+       * Always computed from live state — never hardcoded.
+       */
       get subtotal() {
         return get().items.reduce((sum, i) => sum + i.price * i.quantity, 0)
       },
 
+      /**
+       * Shipping charge — single source of truth for both display and total.
+       *
+       * Logic:
+       *   • synced=true  → server already computed the correct charge (stored in `shipping` state).
+       *   • synced=false → compute locally:
+       *       subtotal ≥ FREE_SHIPPING_THRESHOLD → FREE (0)
+       *       subtotal  < FREE_SHIPPING_THRESHOLD → FLAT_SHIPPING (₹50)
+       *   • Empty cart (subtotal = 0) → always 0 (no shipping on empty cart).
+       */
+      get computedShipping() {
+        const sub = get().subtotal
+        if (sub <= 0) return 0 // empty cart — no shipping charge
+        if (get().synced) {
+          // Server-authoritative: trust what the backend returned
+          return get().shipping
+        }
+        // Guest / pre-hydration: compute locally using the same threshold as the backend
+        return sub >= FREE_SHIPPING_THRESHOLD ? 0 : FLAT_SHIPPING
+      },
+
+      /**
+       * Total = Subtotal + Shipping − Discount
+       * Uses computedShipping so the logic is consistent with what's displayed.
+       */
       get total() {
         const sub = get().subtotal
-        // When synced, the server already computed shipping; otherwise compute locally.
-        const shipping = get().synced
-          ? get().shipping
-          : sub >= FREE_SHIPPING_THRESHOLD ? 0 : FLAT_SHIPPING
-        return sub + shipping - get().discount
+        const ship = get().computedShipping
+        const disc = get().discount
+        // Guard against negative totals (e.g. over-discounting)
+        return Math.max(0, sub + ship - disc)
       },
 
       get itemCount() {
         return get().items.reduce((sum, i) => sum + i.quantity, 0)
       },
     }),
-    { name: 'rm_cart' }
+    {
+      name: 'rm_cart',
+      /**
+       * Sanitize the persisted cart on page load.
+       *
+       * Over time, localStorage may contain stale items whose `price` was stored
+       * as 0 or NaN (e.g. from a previous session where the API returned an
+       * unexpected shape). Strip those out so subtotal is never incorrectly 0.
+       *
+       * Authenticated users will have their cart overwritten by hydrate() anyway,
+       * but guests rely entirely on localStorage so this guard matters for them.
+       */
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.items = state.items.filter(
+            (item) => typeof item.price === 'number' && item.price > 0 && item.quantity > 0
+          )
+        }
+      },
+    }
   )
 )

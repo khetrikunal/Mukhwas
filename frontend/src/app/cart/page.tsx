@@ -7,7 +7,7 @@ import { useCartStore } from '@/store/cartStore'
 import toast from 'react-hot-toast'
 
 export default function CartPage() {
-  const { items, updateQuantity, removeItem, clearCart, subtotal, shipping, discount,
+  const { items, updateQuantity, removeItem, clearCart, subtotal, computedShipping, discount,
           couponCode, total, synced,
           applyCoupon, removeCoupon } = useCartStore()
   const [couponInput, setCouponInput] = useState('')
@@ -140,8 +140,9 @@ export default function CartPage() {
                 </div>
                 <div className="flex justify-between text-gray-600">
                   <span>Shipping</span>
-                  <span className={shipping === 0 ? 'text-green-600 font-medium' : ''}>
-                    {shipping === 0 ? 'FREE' : `₹${shipping}`}
+                  {/* Shipping: FREE when computedShipping === 0, otherwise display the charge */}
+                  <span className={computedShipping === 0 ? 'text-green-600 font-medium' : ''}>
+                    {computedShipping === 0 ? 'FREE' : `₹${computedShipping}`}
                   </span>
                 </div>
                 {discount > 0 && (
@@ -150,7 +151,8 @@ export default function CartPage() {
                     <span>-₹{discount.toFixed(0)}</span>
                   </div>
                 )}
-                {subtotal < 499 && (
+                {/* Progress hint: show how much more to add for free shipping */}
+                {subtotal > 0 && subtotal < 499 && (
                   <p className="text-xs text-gold bg-gold/10 rounded-lg px-3 py-2">
                     Add ₹{(499 - subtotal).toFixed(0)} more for free shipping!
                   </p>

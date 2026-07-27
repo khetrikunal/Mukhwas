@@ -13,12 +13,24 @@ declare global {
 }
 
 export default function CheckoutPage() {
-  const { items, discount, couponCode, clearCart } = useCartStore()
+  const { items, discount, couponCode, clearCart, computedShipping, synced } = useCartStore()
 
+  /**
+   * Calculation flow:
+   *   Subtotal  = Σ(price × quantity) for all cart items
+   *   Shipping  = computedShipping from store (server-authoritative when synced,
+   *               or local rule: FREE if subtotal ≥ ₹499, else ₹50)
+   *   Total     = Subtotal + Shipping − Discount
+   *
+   * We re-derive subtotal here (instead of using the store getter) to ensure
+   * checkout always reflects the live cart item list, not a stale snapshot.
+   */
   const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0)
-  const shipping = subtotal >= 499 ? 0 : 50
+  // Use the store's computedShipping which handles synced vs guest correctly
+  const shipping = synced
+    ? computedShipping
+    : subtotal >= 499 ? 0 : 50
   const total = subtotal + shipping - discount
-
 
   const { user, isAuthenticated } = useAuthStore()
 
