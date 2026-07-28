@@ -66,7 +66,7 @@ export default function CheckoutPage() {
     // or auth flips to a non-empty truthy state is cheap and avoids stale
     // captures of `items` / `isAuthenticated`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, items.length === 0])
+  }, [isAuthenticated, items.length])
 
   const loadRazorpayScript = () => {
     if (document.getElementById('razorpay-script')) return

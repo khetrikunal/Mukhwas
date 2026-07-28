@@ -20,11 +20,18 @@ public class ProductService {
     private final ProductVariantRepository variantRepository;
 
     public Page<Product> getAllProducts(int page, int size, String sort) {
+        // "price-low" / "price-high" are handled by dedicated subquery-based
+        // repository methods (see ProductRepository) to avoid the row fan-out
+        // that Sort.by("variants.retailPrice") causes on a @OneToMany path.
+        if ("price-low".equals(sort)) {
+            return productRepository.findAllActiveOrderByMinPriceAsc(PageRequest.of(page, size));
+        }
+        if ("price-high".equals(sort)) {
+            return productRepository.findAllActiveOrderByMinPriceDesc(PageRequest.of(page, size));
+        }
         Sort sortObj = switch (sort == null ? "newest" : sort) {
-            case "price-low"  -> Sort.by("variants.retailPrice").ascending();
-            case "price-high" -> Sort.by("variants.retailPrice").descending();
-            case "name"       -> Sort.by("name").ascending();
-            default           -> Sort.by("createdAt").descending(); // newest / unknown
+            case "name" -> Sort.by("name").ascending();
+            default     -> Sort.by("createdAt").descending(); // newest / unknown
         };
         return productRepository.findByIsActiveTrue(PageRequest.of(page, size, sortObj));
     }
@@ -64,7 +71,15 @@ public class ProductService {
                 .benefits((String) data.get("benefits"))
                 .category(category)
                 .isFeatured(Boolean.TRUE.equals(data.get("isFeatured")))
-                .isActive(true)
+                // ROOT CAUSE FIX (Rs.0 price bug): a brand-new product has zero variants,
+                // so it has no price yet. Previously this was hardcoded to `true`, which
+                // put the product live on the storefront immediately -- before the admin
+                // had a chance to add a priced variant. Any customer (or the admin's own
+                // "Add to Cart" click) landing on it in that window got a variant-less
+                // product, and the frontend silently fell back to price=0.
+                // New products now start inactive; the admin explicitly activates them
+                // (via the existing "Active" toggle) once at least one priced variant exists.
+                .isActive(false)
                 .metaTitle((String) data.getOrDefault("metaTitle", name))
                 .build();
 
@@ -116,11 +131,22 @@ public class ProductService {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new ResourceNotFoundException("Product not found"));
 
+        // ROOT CAUSE FIX (Rs.0 price bug, part 2): retailPrice used to fall back
+        // silently to BigDecimal.ZERO via toBigDecimal(..., BigDecimal.ZERO)
+        // whenever it was missing or unparseable (e.g. blank string from the
+        // admin form, wrong key name, non-numeric value). That let a variant
+        // -- and therefore the whole product -- go live at Rs.0 with no error
+        // shown anywhere. Price is now required and validated explicitly.
+        BigDecimal retailPrice = toBigDecimal(data.get("retailPrice"), null);
+        if (retailPrice == null || retailPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BadRequestException("Retail price is required and must be greater than 0");
+        }
+
         ProductVariant variant = ProductVariant.builder()
                 .product(product)
                 .weightGrams(toInt(data.get("weightGrams"), 0))
                 .label((String) data.getOrDefault("label", ""))
-                .retailPrice(toBigDecimal(data.get("retailPrice"), BigDecimal.ZERO))
+                .retailPrice(retailPrice)
                 .wholesalePrice(toBigDecimal(data.get("wholesalePrice"), null))
                 .moq(toInt(data.get("moq"), 1))
                 .stockQuantity(toInt(data.get("stockQuantity"), 0))
@@ -137,7 +163,15 @@ public class ProductService {
 
         if (data.containsKey("weightGrams")) variant.setWeightGrams(toInt(data.get("weightGrams"), variant.getWeightGrams()));
         if (data.containsKey("label")) variant.setLabel((String) data.get("label"));
-        if (data.containsKey("retailPrice")) variant.setRetailPrice(toBigDecimal(data.get("retailPrice"), variant.getRetailPrice()));
+        if (data.containsKey("retailPrice")) {
+            // Same guard as addVariant(): never let a bad/blank price silently
+            // persist as the previous value's fallback-to-zero used to allow.
+            BigDecimal newRetailPrice = toBigDecimal(data.get("retailPrice"), null);
+            if (newRetailPrice == null || newRetailPrice.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new BadRequestException("Retail price is required and must be greater than 0");
+            }
+            variant.setRetailPrice(newRetailPrice);
+        }
         if (data.containsKey("wholesalePrice")) variant.setWholesalePrice(toBigDecimal(data.get("wholesalePrice"), variant.getWholesalePrice()));
         if (data.containsKey("moq")) variant.setMoq(toInt(data.get("moq"), variant.getMoq()));
         if (data.containsKey("stockQuantity")) variant.setStockQuantity(toInt(data.get("stockQuantity"), variant.getStockQuantity()));

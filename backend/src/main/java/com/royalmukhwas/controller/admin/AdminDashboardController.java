@@ -2,6 +2,7 @@ package com.royalmukhwas.controller.admin;
 
 import com.royalmukhwas.dto.response.ApiResponse;
 import com.royalmukhwas.dto.response.OrderResponse;
+import com.royalmukhwas.dto.response.UserResponse;
 import com.royalmukhwas.entity.Order;
 import com.royalmukhwas.entity.User;
 import com.royalmukhwas.entity.WholesaleProfile;
@@ -70,25 +71,22 @@ public class AdminDashboardController {
     // ── User management ─────────────────────────────────────────────────────────
 
     @GetMapping("/users")
-    public ResponseEntity<ApiResponse<Page<User>>> users(
+    public ResponseEntity<ApiResponse<Page<UserResponse>>> users(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
-        // NOTE: User entity has no passwordHash exposure risk here because Jackson
-        // serializes only getters; passwordHash is a sensitive field — see M4/CONCERNS.
-        // For now we return the User as-is; a UserResponse DTO without passwordHash
-        // should be introduced when tightening security.
-        return ResponseEntity.ok(ApiResponse.success(userRepository.findAll(pageable)));
+        Page<UserResponse> result = userRepository.findAll(pageable).map(UserResponse::from);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PutMapping("/users/{id}/status")
     @Transactional
-    public ResponseEntity<ApiResponse<User>> updateUserStatus(@PathVariable UUID id,
+    public ResponseEntity<ApiResponse<UserResponse>> updateUserStatus(@PathVariable UUID id,
                                                               @RequestBody Map<String, Boolean> body) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         if (body.get("isActive") != null) user.setIsActive(body.get("isActive"));
-        return ResponseEntity.ok(ApiResponse.success("User status updated", userRepository.save(user)));
+        return ResponseEntity.ok(ApiResponse.success("User status updated", UserResponse.from(userRepository.save(user))));
     }
 
     // ── Wholesale approvals ─────────────────────────────────────────────────────

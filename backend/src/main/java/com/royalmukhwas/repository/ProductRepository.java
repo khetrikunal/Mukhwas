@@ -35,5 +35,23 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     Page<Product> searchProductsAdmin(@Param("q") String query, Pageable pageable);
 
     Page<Product> findByCategorySlug(String slug, Pageable pageable);
+
+    /**
+     * Sort active products by their cheapest variant price, ascending.
+     *
+     * <p>Uses a correlated subquery so Hibernate does not produce duplicate
+     * rows via a JOIN on the @OneToMany {@code variants} collection —
+     * the fan-out problem that {@code Sort.by("variants.retailPrice")} causes.
+     */
+    @Query("SELECT p FROM Product p WHERE p.isActive = true " +
+           "ORDER BY (SELECT MIN(v.retailPrice) FROM ProductVariant v WHERE v.product = p AND v.isActive = true) ASC")
+    Page<Product> findAllActiveOrderByMinPriceAsc(Pageable pageable);
+
+    /**
+     * Sort active products by their cheapest variant price, descending.
+     */
+    @Query("SELECT p FROM Product p WHERE p.isActive = true " +
+           "ORDER BY (SELECT MIN(v.retailPrice) FROM ProductVariant v WHERE v.product = p AND v.isActive = true) DESC")
+    Page<Product> findAllActiveOrderByMinPriceDesc(Pageable pageable);
 }
 

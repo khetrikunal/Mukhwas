@@ -3,20 +3,35 @@ package com.royalmukhwas.service;
 import com.royalmukhwas.dto.request.OrderRequest;
 import com.royalmukhwas.dto.response.OrderResponse;
 import com.royalmukhwas.entity.*;
-import com.royalmukhwas.exception.CustomExceptions.*;
+import com.royalmukhwas.exception.CustomExceptions.BadRequestException;
+import com.royalmukhwas.exception.CustomExceptions.ResourceNotFoundException;
 import com.royalmukhwas.repository.*;
-import com.royalmukhwas.util.OrderNumberGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.math.BigDecimal;
-import java.util.*;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
+/**
+ * Core order lifecycle service: place, query, and update orders.
+ *
+ * <p>Stock deduction happens atomically inside {@link #placeOrder} using
+ * optimistic locking on {@link ProductVariant#getVersion()} — concurrent
+ * requests for the last unit will see an {@code ObjectOptimisticLockingFailureException}
+ * which the caller should surface as a 409 Conflict via the global exception handler.
+ *
+ * <p>{@link #updateStatus} is idempotent for the CANCELLED transition: stock
+ * is restored only on the first cancellation, never on repeated calls with
+ * the same status.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -25,153 +40,225 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final ProductVariantRepository variantRepository;
     private final AddressRepository addressRepository;
-    private final CouponRepository couponRepository;
     private final UserRepository userRepository;
+    private final CouponRepository couponRepository;
+    private final CartRepository cartRepository;
     private final OrderMapper orderMapper;
 
     @Value("${app.free-shipping-threshold:499}")
     private BigDecimal freeShippingThreshold;
 
-    @Value("${app.cod-max-amount:2000}")
-    private BigDecimal codMaxAmount;
+    // ── Place order ──────────────────────────────────────────────────────────
 
-    /**
-     * Place an order from a typed {@link OrderRequest}. Retries once on an
-     * optimistic-locking conflict — two concurrent orders racing for the same
-     * variant stock. After one retry, a persistent conflict surfaces as a
-     * {@link ConflictException} so the client gets a clean message instead of a
-     * stack trace.
-     *
-     * <p>Replaces the older {@code Map<String,Object>} overload that needed
-     * brittle {@code (Integer) quantity} / {@code UUID.fromString(...)} casts.
-     */
     @Transactional
-    public OrderResponse placeOrder(UUID userId, OrderRequest request) {
-        try {
-            return doPlaceOrder(userId, request);
-        } catch (ObjectOptimisticLockingFailureException ex) {
-            log.warn("Optimistic lock conflict placing order for user {}, retrying once", userId);
-            try {
-                return doPlaceOrder(userId, request);
-            } catch (ObjectOptimisticLockingFailureException ex2) {
-                throw new ConflictException(
-                        "Your order conflicts with another in-progress order. Please try again.");
-            }
-        }
-    }
-
-    /**
-     * Inner placement logic, run in its own transaction so a retry can start
-     * fresh (the outer {@link #placeOrder} transaction is propagated, but the
-     * version check still re-reads current stock on the second attempt).
-     */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public OrderResponse doPlaceOrder(UUID userId, OrderRequest request) {
+    public OrderResponse placeOrder(UUID userId, OrderRequest req) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        UUID addressId = request.getAddressId();
-        Address address = addressRepository.findById(addressId)
+        Address address = addressRepository.findById(req.getAddressId())
                 .orElseThrow(() -> new ResourceNotFoundException("Address not found"));
 
-        Order.OrderType orderType = user.getRole() == User.Role.WHOLESALE
-                ? Order.OrderType.WHOLESALE : Order.OrderType.RETAIL;
+        boolean isWholesale = user.getRole() == User.Role.WHOLESALE;
 
+        // Build order items and deduct stock.
+        List<OrderItem> items = new ArrayList<>();
         BigDecimal subtotal = BigDecimal.ZERO;
-        List<OrderItem> orderItems = new ArrayList<>();
 
-        for (OrderRequest.Item item : request.getItems()) {
-            UUID variantId = item.getVariantId();
-            int qty = item.getQuantity(); // typed Integer — no more cast fragility
+        for (OrderRequest.Item reqItem : req.getItems()) {
+            ProductVariant variant = variantRepository.findById(reqItem.getVariantId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Variant not found: " + reqItem.getVariantId()));
 
-            ProductVariant variant = variantRepository.findById(variantId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Variant not found"));
+            if (!Boolean.TRUE.equals(variant.getIsActive()))
+                throw new BadRequestException("Variant is unavailable: " + variant.getSku());
 
-            if (variant.getStockQuantity() < qty)
-                throw new InsufficientStockException("Insufficient stock for: " + variant.getProduct().getName());
+            if (variant.getStockQuantity() < reqItem.getQuantity())
+                throw new BadRequestException(
+                        "Insufficient stock for " + variant.getLabel()
+                        + " (available: " + variant.getStockQuantity() + ")");
 
-            BigDecimal price = (orderType == Order.OrderType.WHOLESALE && variant.getWholesalePrice() != null)
-                    ? variant.getWholesalePrice()
-                    : variant.getRetailPrice();
+            // Deduct stock — version bump triggers optimistic lock on concurrent requests.
+            variant.setStockQuantity(variant.getStockQuantity() - reqItem.getQuantity());
+            variantRepository.save(variant);
 
-            BigDecimal itemTotal = price.multiply(BigDecimal.valueOf(qty));
-            subtotal = subtotal.add(itemTotal);
+            BigDecimal unitPrice = (isWholesale && variant.getWholesalePrice() != null)
+                    ? variant.getWholesalePrice() : variant.getRetailPrice();
+            BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(reqItem.getQuantity()));
+            subtotal = subtotal.add(lineTotal);
 
-            orderItems.add(OrderItem.builder()
+            items.add(OrderItem.builder()
                     .variant(variant)
                     .product(variant.getProduct())
                     .productName(variant.getProduct().getName())
                     .variantLabel(variant.getLabel())
-                    .quantity(qty)
-                    .unitPrice(price)
-                    .totalPrice(itemTotal)
+                    .quantity(reqItem.getQuantity())
+                    .unitPrice(unitPrice)
+                    .totalPrice(lineTotal)
                     .build());
-
-            // Decrement stock — @Version on ProductVariant guards against overselling.
-            variant.setStockQuantity(variant.getStockQuantity() - qty);
-            variantRepository.save(variant);
         }
 
-        // Shipping
-        BigDecimal shipping = subtotal.compareTo(freeShippingThreshold) >= 0
-                ? BigDecimal.ZERO : new BigDecimal("50");
-
-        // Discount via coupon
+        // Coupon discount.
         BigDecimal discount = BigDecimal.ZERO;
-        String couponCode = request.getCouponCode();
-        if (couponCode != null && !couponCode.isBlank()) {
-            Coupon coupon = couponRepository.findByCode(couponCode)
-                    .orElseThrow(() -> new BadRequestException("Invalid coupon code"));
-            discount = applyCoupon(coupon, subtotal);
-            coupon.setUsedCount(coupon.getUsedCount() + 1);
-            couponRepository.save(coupon);
+        String appliedCoupon = null;
+        if (req.getCouponCode() != null && !req.getCouponCode().isBlank()) {
+            String code = req.getCouponCode().toUpperCase();
+            Coupon coupon = couponRepository.findByCode(code).orElse(null);
+            if (coupon != null) {
+                try {
+                    // Reuse CouponService logic inline to avoid circular bean dependency.
+                    discount = computeDiscount(coupon, subtotal);
+                    // Consume the coupon usage slot.
+                    coupon.setUsedCount(coupon.getUsedCount() + 1);
+                    couponRepository.save(coupon);
+                    appliedCoupon = code;
+                } catch (BadRequestException e) {
+                    log.warn("Coupon '{}' rejected at order placement: {}", code, e.getMessage());
+                }
+            }
         }
 
-        BigDecimal total = subtotal.add(shipping).subtract(discount);
+        // Shipping.
+        BigDecimal shipping = subtotal.compareTo(BigDecimal.ZERO) > 0
+                && subtotal.compareTo(freeShippingThreshold) < 0
+                ? new BigDecimal("50") : BigDecimal.ZERO;
 
-        // Validate COD limit
+        BigDecimal total = subtotal.add(shipping).subtract(discount).max(BigDecimal.ZERO);
+
         Order.PaymentMethod paymentMethod;
         try {
-            paymentMethod = Order.PaymentMethod.valueOf(request.getPaymentMethod());
-        } catch (IllegalArgumentException ex) {
-            throw new BadRequestException("Invalid payment method: " + request.getPaymentMethod());
+            paymentMethod = Order.PaymentMethod.valueOf(req.getPaymentMethod().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new BadRequestException("Invalid payment method: " + req.getPaymentMethod());
         }
-        if (paymentMethod == Order.PaymentMethod.COD && total.compareTo(codMaxAmount) > 0)
-            throw new BadRequestException("COD not available for orders above ₹" + codMaxAmount);
 
         Order order = Order.builder()
                 .user(user)
-                .orderNumber(OrderNumberGenerator.generate())
-                .orderType(orderType)
-                .status(Order.OrderStatus.PENDING)
                 .address(address)
-                .subtotal(subtotal)
-                .shippingCharge(shipping)
-                .discountAmount(discount)
-                .taxAmount(BigDecimal.ZERO)
-                .totalAmount(total)
-                .couponCode(couponCode)
-                .notes(request.getNotes())
+                .orderNumber(generateOrderNumber())
+                .orderType(isWholesale ? Order.OrderType.WHOLESALE : Order.OrderType.RETAIL)
+                .status(Order.OrderStatus.PENDING)
                 .paymentStatus(Order.PaymentStatus.PENDING)
                 .paymentMethod(paymentMethod)
+                .subtotal(subtotal)
+                .discountAmount(discount)
+                .shippingCharge(shipping)
+                .taxAmount(BigDecimal.ZERO)
+                .totalAmount(total)
+                .couponCode(appliedCoupon)
+                .notes(req.getNotes())
                 .build();
 
-        order = orderRepository.save(order);
-
-        for (OrderItem oi : orderItems) {
-            oi.setOrder(order);
+        // Link items to the order before cascade-save.
+        Order savedOrder = orderRepository.save(order);
+        for (OrderItem item : items) {
+            item.setOrder(savedOrder);
         }
-        order.setItems(orderItems);
+        savedOrder.setItems(items);
+        savedOrder = orderRepository.save(savedOrder);
 
+        // Clear the server-side cart after a successful order so stale items
+        // don't reappear when the user logs in again from another device.
+        cartRepository.findByUserId(userId).ifPresent(cart -> {
+            cart.getItems().clear();
+            cart.setCouponCode(null);
+            cartRepository.save(cart);
+        });
+
+        log.info("Order placed: {} for user {}", savedOrder.getOrderNumber(), userId);
+        return orderMapper.toResponse(savedOrder);
+    }
+
+    // ── Queries ──────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public List<OrderResponse> getUserOrders(UUID userId) {
+        return orderRepository.findByUserIdOrderByCreatedAtDesc(userId)
+                .stream()
+                .map(orderMapper::toResponse)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Fetch an order by its human-readable order number, enforcing that the
+     * requesting user is the owner (prevents IDOR).
+     */
+    @Transactional(readOnly = true)
+    public OrderResponse getByOrderNumberForOwner(String orderNumber, UUID userId) {
+        Order order = orderRepository.findByOrderNumber(orderNumber)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found: " + orderNumber));
+        assertOwner(order, userId);
+        return orderMapper.toResponse(order);
+    }
+
+    /**
+     * Fetch an order by its UUID, enforcing owner access (prevents IDOR).
+     * Used by {@link com.royalmukhwas.controller.OrderController#cancel} as a
+     * pre-authorisation check before writing any state.
+     */
+    @Transactional(readOnly = true)
+    public OrderResponse getByIdForOwner(UUID orderId, UUID userId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
+        assertOwner(order, userId);
+        return orderMapper.toResponse(order);
+    }
+
+    // ── Status update (admin + owner cancel) ─────────────────────────────────
+
+    /**
+     * Update order status.
+     *
+     * <p>Idempotency fix: stock is restored <em>only</em> on the transition
+     * <em>into</em> CANCELLED, not on every call that sets CANCELLED. This
+     * prevents double-click / retry requests from silently inflating inventory.
+     */
+    @Transactional
+    public OrderResponse updateStatus(UUID orderId, String status) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
+
+        // BUG FIX: this endpoint was not idempotent. Calling it twice with
+        // status=CANCELLED (double click, retried request, etc.) restored stock
+        // twice for the same order, silently inflating inventory. Only restore
+        // stock on the transition INTO cancelled, not every time it's set.
+        boolean wasAlreadyCancelled = order.getStatus() == Order.OrderStatus.CANCELLED;
+        order.setStatus(Order.OrderStatus.valueOf(status));
+
+        if (Order.OrderStatus.CANCELLED.name().equals(status) && !wasAlreadyCancelled) {
+            for (OrderItem item : order.getItems()) {
+                ProductVariant variant = item.getVariant();
+                variant.setStockQuantity(variant.getStockQuantity() + item.getQuantity());
+                variantRepository.save(variant);
+            }
+        }
         Order saved = orderRepository.save(order);
         return orderMapper.toResponse(saved);
     }
 
-    private BigDecimal applyCoupon(Coupon coupon, BigDecimal subtotal) {
-        if (!coupon.getIsActive()) throw new BadRequestException("Coupon is inactive");
-        if (coupon.getValidFrom() != null && coupon.getValidFrom().isAfter(java.time.LocalDateTime.now()))
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private void assertOwner(Order order, UUID userId) {
+        if (order.getUser() == null || !order.getUser().getId().equals(userId)) {
+            throw new ResourceNotFoundException("Order not found");
+        }
+    }
+
+    private String generateOrderNumber() {
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+        String random = String.valueOf((int) (Math.random() * 9000) + 1000);
+        return "RM-" + timestamp + "-" + random;
+    }
+
+    /**
+     * Standalone discount computation — mirrors {@link CouponService#computeDiscount}
+     * so this service can apply and consume coupons without a circular dependency.
+     */
+    private BigDecimal computeDiscount(Coupon coupon, BigDecimal subtotal) {
+        if (!Boolean.TRUE.equals(coupon.getIsActive()))
+            throw new BadRequestException("Coupon is inactive");
+        if (coupon.getValidFrom() != null && coupon.getValidFrom().isAfter(LocalDateTime.now()))
             throw new BadRequestException("Coupon is not yet active");
-        if (coupon.getValidUntil() != null && coupon.getValidUntil().isBefore(java.time.LocalDateTime.now()))
+        if (coupon.getValidUntil() != null && coupon.getValidUntil().isBefore(LocalDateTime.now()))
             throw new BadRequestException("Coupon has expired");
         if (coupon.getUsageLimit() != null && coupon.getUsedCount() >= coupon.getUsageLimit())
             throw new BadRequestException("Coupon usage limit reached");
@@ -186,56 +273,6 @@ public class OrderService {
         } else {
             discount = coupon.getDiscountValue();
         }
-        return discount;
-    }
-
-    @Transactional(readOnly = true)
-    public List<OrderResponse> getUserOrders(UUID userId) {
-        return orderRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
-                .map(orderMapper::toResponse)
-                .collect(Collectors.toList());
-    }
-
-    @Transactional(readOnly = true)
-    public OrderResponse getByOrderNumber(String orderNumber) {
-        return orderMapper.toResponse(
-                orderRepository.findByOrderNumber(orderNumber)
-                        .orElseThrow(() -> new ResourceNotFoundException("Order not found: " + orderNumber)));
-    }
-
-    @Transactional(readOnly = true)
-    public OrderResponse getByIdForOwner(UUID orderId, UUID userId) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
-        if (!order.getUser().getId().equals(userId))
-            throw new ForbiddenException("You do not have access to this order");
-        return orderMapper.toResponse(order);
-    }
-
-    @Transactional(readOnly = true)
-    public OrderResponse getByOrderNumberForOwner(String orderNumber, UUID userId) {
-        Order order = orderRepository.findByOrderNumber(orderNumber)
-                .orElseThrow(() -> new ResourceNotFoundException("Order not found: " + orderNumber));
-        if (!order.getUser().getId().equals(userId))
-            throw new ForbiddenException("You do not have access to this order");
-        return orderMapper.toResponse(order);
-    }
-
-    @Transactional
-    public OrderResponse updateStatus(UUID orderId, String status) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
-        order.setStatus(Order.OrderStatus.valueOf(status));
-
-        // Restore stock on cancel
-        if (Order.OrderStatus.CANCELLED.name().equals(status)) {
-            for (OrderItem item : order.getItems()) {
-                ProductVariant variant = item.getVariant();
-                variant.setStockQuantity(variant.getStockQuantity() + item.getQuantity());
-                variantRepository.save(variant);
-            }
-        }
-        Order saved = orderRepository.save(order);
-        return orderMapper.toResponse(saved);
+        return discount.min(subtotal);
     }
 }
