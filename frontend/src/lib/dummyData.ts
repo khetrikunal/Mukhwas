@@ -160,23 +160,26 @@ export const DUMMY_PRODUCTS: Product[] = [
   // === CHATPATA MUKHWAS ===
   {
     id: 'd-9',
-    name: 'Tikhi Keri',
-    slug: 'tikhi keri',
-    description: 'Tikhi Keri is a delicious and tangy mouth freshener inspired by the bold flavors of raw mango. Made with carefully selected raw mango pieces, salt, chili powder, and asafoetida, this traditional blend delivers the perfect balance of spicy, tangy, and savory taste. Its irresistible flavor makes it an excellent choice for those who enjoy a zesty snack after meals or anytime they crave a burst of authentic Indian taste',
-    benefits:'Tikhi Keri helps stimulate the appetite, supports healthy digestion, delivers a delicious tangy and spicy flavor, refreshes the palate, and provides an authentic traditional taste that can be enjoyed anytime.',
-    ingredients:'Tikhi Keri is prepared using premium raw mango, salt, chili powder, asafoetida (hing), and natural flavoring to create its signature tangy and spicy taste.',
+    // DB product: 'Tilchi Feri' with slug 'tilchi-feri' (RM-CHP-TLF-100)
+    // Previous dummy entry had 'tikhi keri' with a SPACE in the slug — invalid URL → 404
+    name: 'Tilchi Feri',
+    slug: 'tilchi-feri',
+    description: 'Tilchi Feri is a tangy and spicy sesame-based mukhwas with a bold chatpata flavor. Made with roasted til seeds, raw mango powder, and select spices. A zesty treat for those who crave a punch of flavor after every meal.',
+    benefits: 'Tilchi Feri provides a bold chatpata flavor, helps stimulate the appetite, supports healthy digestion after meals, refreshes the palate with its tangy taste, and makes for a delicious and flavorful everyday mukhwas.',
+    ingredients: 'Tilchi Feri is prepared using premium roasted sesame seeds (til), raw mango powder (amchur), salt, chili powder, and natural spices to create its signature tangy and spicy taste.',
     category: { id: 'c-chatpata', name: 'Chatpata Mukhwas', slug: 'chatpata-mukhwas', isActive: true, sortOrder: 3 },
     isFeatured: false,
     isActive: true,
     variants: [
-      { id: 'v-9', weightGrams: 100, label: '100 gm', retailPrice: 120, wholesalePrice: 63, moq: 10, stockQuantity: 500, sku: 'DM-TLF-100', isActive: true }
+      { id: 'v-9', weightGrams: 100, label: '100 gm', retailPrice: 120, wholesalePrice: 63, moq: 10, stockQuantity: 500, sku: 'RM-CHP-TLF-100', isActive: true }
     ],
     images: [
-      { id: 'img-9-1', imageUrl: '/products/chatpata-mukhwas/Tikhi Keri.jpeg', isPrimary: true, sortOrder: 0 },
-      { id: 'img-9-2', imageUrl: '/products/chatpata-mukhwas/TIkhi Keri package.jpeg', isPrimary: false, sortOrder: 1 }
+      { id: 'img-9-1', imageUrl: '/products/chatpata-mukhwas/tilchi-feri.jpeg', isPrimary: true, sortOrder: 0 },
+      { id: 'img-9-2', imageUrl: '/products/chatpata-mukhwas/tilchi-feri-package.jpeg', isPrimary: false, sortOrder: 1 }
     ],
     createdAt: new Date().toISOString()
   },
+
 
   // === DIGESTIVE MUKHWAS ===
   {

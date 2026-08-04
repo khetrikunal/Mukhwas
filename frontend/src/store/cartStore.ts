@@ -76,6 +76,7 @@ export interface ServerCart {
 
 const FREE_SHIPPING_THRESHOLD = 499
 const FLAT_SHIPPING = 50
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export const useCartStore = create<CartState>()(
   persist(
@@ -123,6 +124,11 @@ export const useCartStore = create<CartState>()(
       addItem: async (newItem) => {
         if (get().synced) {
           // Server-authoritative path: call the API and sync state from the response.
+          // Verify that variantId is a valid UUID to prevent sending mock IDs like 'v-1' to the backend.
+          if (!UUID_RE.test(newItem.variantId)) {
+            console.error(`[cartStore] Refusing to add non-UUID variantId "${newItem.variantId}" to server cart.`)
+            throw new Error(`Invalid variant ID: ${newItem.variantId}`)
+          }
           // Do NOT catch here — let the error propagate to the caller (e.g. handleAddToCart)
           // so it can show a proper error toast instead of a misleading success message.
           const res = await cartApi.add({ variantId: newItem.variantId, quantity: newItem.quantity })

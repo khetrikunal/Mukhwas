@@ -83,6 +83,30 @@ public class GlobalExceptionHandler {
                         .success(false).message("Validation failed").data(errors).build());
     }
 
+    /**
+     * Handles malformed request bodies where Jackson cannot deserialize a field.
+     *
+     * <p>Most common cause in production: the frontend sends a non-UUID string
+     * (e.g. {@code "v-1"}) for a field declared as {@code UUID} in a request DTO.
+     * Previously this fell through to the generic 500 handler. Now it returns
+     * 400 Bad Request with the exact deserialisation message so it is:
+     * <ul>
+     *   <li>Easy to diagnose in Render logs without a stack trace</li>
+     *   <li>Never misreported as a server-side failure</li>
+     * </ul>
+     */
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMalformedBody(
+            org.springframework.http.converter.HttpMessageNotReadableException ex) {
+        // The message already contains the field name and the bad value, e.g.:
+        //   "Cannot deserialize value of type `UUID` from String \"v-1\""
+        String msg = ex.getMostSpecificCause().getMessage();
+        log.warn("Malformed request body — likely non-UUID sent to a UUID field. Jackson says: {}", msg);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("Invalid request body: " + msg));
+    }
+
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGeneral(Exception ex) {
         log.error("Unhandled exception caught by GlobalExceptionHandler: {}", ex.getMessage(), ex);

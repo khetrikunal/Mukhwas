@@ -33,11 +33,13 @@ public class CartController {
     public ResponseEntity<ApiResponse<CartResponse>> add(@Valid @RequestBody CartItemRequest req,
                                                          Authentication auth) {
         UUID userId = userResolver.getUserId(auth);
-        log.debug("=== CartController.add() === userId={}, variantId={}, quantity={}",
+        // INFO level so this is visible in Render production logs without needing DEBUG enabled.
+        // This proves exactly what variantId the backend received — essential for forensics.
+        log.info("=== CartController.add() === userId={}, variantId={}, quantity={}",
                 userId, req.getVariantId(), req.getQuantity());
         try {
             CartResponse response = cartService.addItem(userId, req);
-            log.debug("=== CartController.add() SUCCESS === itemCount={}", response.getItemCount());
+            log.info("=== CartController.add() SUCCESS === userId={}, itemCount={}", userId, response.getItemCount());
             return ResponseEntity.ok(ApiResponse.success("Item added", response));
         } catch (Exception e) {
             log.error("=== CartController.add() FAILED === userId={}, variantId={}, quantity={}, exceptionType={}, message={}",
