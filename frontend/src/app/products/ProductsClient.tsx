@@ -38,7 +38,10 @@ export default function ProductsClient() {
         setProducts(dataContent)
         setTotalPages(res.data.data?.totalPages || 0)
       } else {
-        // Fallback to locally filtered dummy products
+        // API returned empty — fall back to locally filtered dummy products.
+        // NOTE: Dummy products use non-UUID IDs (e.g. 'v-1'). The ProductCard
+        // component handles this by redirecting to the product page on cart add.
+        console.warn('[ProductsClient] API returned empty, using DUMMY_PRODUCTS fallback')
         let filtered = DUMMY_PRODUCTS
         if (selectedCategory) {
           filtered = filtered.filter(p => p.category?.slug === selectedCategory)
@@ -51,8 +54,9 @@ export default function ProductsClient() {
         setTotalPages(Math.ceil(filtered.length / 12))
       }
     } catch (e) {
-      console.error('API failed, falling back to local mocks:', e)
-      // Fallback to locally filtered dummy products on failure
+      console.error('[ProductsClient] API failed, falling back to DUMMY_PRODUCTS:', e)
+      // NOTE: Dummy products use non-UUID IDs (e.g. 'v-1'). The ProductCard
+      // component handles this by redirecting to the product page on cart add.
       let filtered = DUMMY_PRODUCTS
       if (selectedCategory) {
         filtered = filtered.filter(p => p.category?.slug === selectedCategory)
@@ -66,6 +70,7 @@ export default function ProductsClient() {
     } finally {
       setLoading(false)
     }
+
   }
 
   useEffect(() => {

@@ -3,13 +3,17 @@ import { useState, useEffect } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { ShoppingCart, Plus, Minus, Star, Leaf, ChevronLeft, ChevronRight, Package, Truck, Shield } from 'lucide-react'
+import { ShoppingCart, Plus, Minus, Star, Leaf, ChevronLeft, ChevronRight, Package, Truck, Shield, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { productApi, reviewApi } from '@/lib/api'
 import { DUMMY_PRODUCTS } from '@/lib/dummyData'
 import { Product, ProductVariant } from '@/types'
 import { useCartStore } from '@/store/cartStore'
 import { useAuthStore } from '@/store/authStore'
+
+/** UUID v4 regex — real backend IDs always match this format. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const isUUID = (s: string) => UUID_RE.test(s)
 
 export default function ProductDetailPage() {
   const { slug } = useParams<{ slug: string }>()
@@ -20,6 +24,9 @@ export default function ProductDetailPage() {
   const [reviews, setReviews] = useState<any[]>([])
   const [activeTab, setActiveTab] = useState<'desc' | 'ingredients' | 'benefits'>('desc')
   const [loading, setLoading] = useState(true)
+  // True when the backend was unreachable and we fell back to dummy data.
+  // Dummy data has non-UUID IDs (e.g. 'v-1') that the cart API cannot accept.
+  const [usingFallback, setUsingFallback] = useState(false)
   const addItem = useCartStore((s) => s.addItem)
   const { user } = useAuthStore()
 
@@ -30,6 +37,7 @@ export default function ProductDetailPage() {
         const prodRes = await productApi.getBySlug(slug)
         const prod = prodRes.data.data
         setProduct(prod)
+        setUsingFallback(false)
         if (prod.variants?.length) setSelectedVariant(prod.variants[0])
 
         // Step 2: Fetch reviews using the product's UUID (NOT the slug).
@@ -42,6 +50,7 @@ export default function ProductDetailPage() {
         const localProd = DUMMY_PRODUCTS.find((p) => p.slug === slug)
         if (localProd) {
           setProduct(localProd)
+          setUsingFallback(true)  // mark as fallback — IDs are not real UUIDs
           if (localProd.variants?.length) setSelectedVariant(localProd.variants[0])
         } else {
           toast.error('Product not found')
@@ -66,6 +75,15 @@ export default function ProductDetailPage() {
 
   const handleAddToCart = async () => {
     if (!selectedVariant || !product || !inStock) return
+
+    // Guard: if the backend was unreachable we fell back to dummy data.
+    // Dummy variant IDs like 'v-1' are NOT UUIDs — sending them to the
+    // backend causes: "Cannot deserialize value of type UUID from String \"v-1\""
+    if (usingFallback || !isUUID(selectedVariant.id) || !isUUID(product.id)) {
+      toast.error('Product data is not available. Please refresh the page and try again.')
+      return
+    }
+
     try {
       // Await the API call — addItem is async and hits the backend when the
       // user is logged in. Only show the success toast after the server confirms
@@ -81,8 +99,8 @@ export default function ProductDetailPage() {
         quantity,
       })
       toast.success(`${product.name} added to cart!`)
-    } catch {
-      toast.error('Could not add item to cart. Please try again.')
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Could not add item to cart. Please try again.')
     }
   }
 
@@ -117,7 +135,22 @@ export default function ProductDetailPage() {
 
   return (
     <div className="pt-[70px] min-h-screen bg-cream">
+      {/* Fallback banner — shown when backend is unreachable and dummy data is used */}
+      {usingFallback && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5">
+          <div className="max-w-7xl mx-auto flex items-center gap-2 text-amber-700 text-xs font-medium">
+            <AlertTriangle size={14} className="flex-shrink-0" />
+            <span>
+              Our server is currently unavailable. Product details are shown from a local cache.
+              <button onClick={() => window.location.reload()} className="ml-2 underline font-bold hover:text-amber-900">
+                Refresh to try again
+              </button>
+            </span>
+          </div>
+        </div>
+      )}
       {/* Breadcrumb */}
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex items-center gap-2 text-xs text-gray-400">
           <Link href="/" className="hover:text-gold transition-colors">Home</Link>

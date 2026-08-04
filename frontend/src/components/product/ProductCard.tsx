@@ -2,11 +2,16 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
+import { useRouter } from 'next/navigation'
 import { ShoppingCart, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Product } from '@/types'
 import { useCartStore } from '@/store/cartStore'
 import { useAuthStore } from '@/store/authStore'
 import toast from 'react-hot-toast'
+
+/** UUID v4 regex — real backend IDs always match this format. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const isUUID = (s: string) => UUID_RE.test(s)
 
 interface Props {
   product: Product
@@ -15,6 +20,7 @@ interface Props {
 export default function ProductCard({ product }: Props) {
   const addItem = useCartStore((s) => s.addItem)
   const { user } = useAuthStore()
+  const router = useRouter()
   const [imageIndex, setImageIndex] = useState(0)
   const [isHovered, setIsHovered] = useState(false)
 
@@ -42,6 +48,17 @@ export default function ProductCard({ product }: Props) {
       toast.error('Out of stock')
       return
     }
+
+    // Guard: dummy/fallback data uses non-UUID IDs like 'v-1', 'd-3'.
+    // Sending these to the backend causes:
+    //   "Cannot deserialize value of type UUID from String \"v-1\""
+    // Redirect to the product page where the real API data (with real UUIDs) is loaded.
+    if (!isUUID(primaryVariant.id) || !isUUID(product.id)) {
+      router.push(`/products/${product.slug}`)
+      toast(`View ${product.name} to add it to your cart`, { icon: '👆' })
+      return
+    }
+
     try {
       await addItem({
         variantId: primaryVariant.id,
