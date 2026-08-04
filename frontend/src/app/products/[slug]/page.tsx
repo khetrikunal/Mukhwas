@@ -26,13 +26,16 @@ export default function ProductDetailPage() {
   useEffect(() => {
     const fetchProduct = async () => {
       try {
-        const [prodRes, revRes] = await Promise.all([
-          productApi.getBySlug(slug),
-          reviewApi.getByProduct(slug).catch(() => ({ data: { data: [] } })),
-        ])
+        // Step 1: Fetch product by slug
+        const prodRes = await productApi.getBySlug(slug)
         const prod = prodRes.data.data
         setProduct(prod)
         if (prod.variants?.length) setSelectedVariant(prod.variants[0])
+
+        // Step 2: Fetch reviews using the product's UUID (NOT the slug).
+        // The backend endpoint expects a UUID path variable; passing a slug
+        // causes Spring to throw MethodArgumentTypeMismatchException → HTTP 500.
+        const revRes = await reviewApi.getByProduct(prod.id).catch(() => ({ data: { data: [] } }))
         setReviews(revRes.data.data || [])
       } catch (err) {
         console.error('Failed fetching product from API, checking local mocks:', err)
@@ -61,18 +64,26 @@ export default function ProductDetailPage() {
 
   const inStock = selectedVariant && selectedVariant.stockQuantity > 0
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     if (!selectedVariant || !product || !inStock) return
-    addItem({
-      variantId: selectedVariant.id,
-      productId: product.id,
-      productName: product.name,
-      variantLabel: selectedVariant.label,
-      imageUrl: product.images?.find((i) => i.isPrimary)?.imageUrl,
-      price,
-      quantity,
-    })
-    toast.success(`${product.name} added to cart!`)
+    try {
+      // Await the API call — addItem is async and hits the backend when the
+      // user is logged in. Only show the success toast after the server confirms
+      // the item was added (2xx response). If the API returns 500/4xx the catch
+      // block shows an error toast instead of a misleading success message.
+      await addItem({
+        variantId: selectedVariant.id,
+        productId: product.id,
+        productName: product.name,
+        variantLabel: selectedVariant.label,
+        imageUrl: product.images?.find((i) => i.isPrimary)?.imageUrl,
+        price,
+        quantity,
+      })
+      toast.success(`${product.name} added to cart!`)
+    } catch {
+      toast.error('Could not add item to cart. Please try again.')
+    }
   }
 
   if (loading) {

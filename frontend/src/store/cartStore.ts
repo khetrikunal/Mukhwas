@@ -122,16 +122,14 @@ export const useCartStore = create<CartState>()(
       // ── Mutations: server-first when synced, local fallback for guests ─────
       addItem: async (newItem) => {
         if (get().synced) {
-          try {
-            const res = await cartApi.add({ variantId: newItem.variantId, quantity: newItem.quantity })
-            get().resetFromServer(res.data.data)
-            return
-          } catch {
-            // API failed - revert to local mode to prevent perpetual desync
-            set({ synced: false })
-            /* fall through to local */
-          }
+          // Server-authoritative path: call the API and sync state from the response.
+          // Do NOT catch here — let the error propagate to the caller (e.g. handleAddToCart)
+          // so it can show a proper error toast instead of a misleading success message.
+          const res = await cartApi.add({ variantId: newItem.variantId, quantity: newItem.quantity })
+          get().resetFromServer(res.data.data)
+          return
         }
+        // Guest / pre-login fallback: update local state only.
         set((state) => {
           const existing = state.items.find((i) => i.variantId === newItem.variantId)
           if (existing) {
@@ -146,6 +144,7 @@ export const useCartStore = create<CartState>()(
           return { items: [...state.items, newItem] }
         })
       },
+
 
       updateQuantity: async (variantId, quantity) => {
         // If quantity drops to zero or below, remove the item instead of updating
